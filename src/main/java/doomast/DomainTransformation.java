@@ -8,10 +8,8 @@ import org.codehaus.groovy.control.CompilePhase;
 import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.transform.AbstractASTTransformation;
 import org.codehaus.groovy.transform.GroovyASTTransformation;
-
 import java.lang.reflect.Modifier;
 import java.net.URI;
-import java.util.Arrays;
 
 @GroovyASTTransformation(phase = CompilePhase.INSTRUCTION_SELECTION)
 public class DomainTransformation extends AbstractASTTransformation {
@@ -19,7 +17,7 @@ public class DomainTransformation extends AbstractASTTransformation {
     @Override
     public void visit(ASTNode[] nodes, SourceUnit sourceUnit) {
         if (IsValid(sourceUnit)) {
-            addInnerClass(sourceUnit);
+            addDateRangeInnerClass(sourceUnit);
             sourceUnit.getAST().getClasses().stream()
                     .forEach(classNode -> {
                         visit(classNode);
@@ -161,62 +159,126 @@ public class DomainTransformation extends AbstractASTTransformation {
      *
      * @param sourceUnit
      */
-    private void addInnerClass(SourceUnit sourceUnit) {
-        ClassNode implementsValidateable = new ClassNode(
-                "grails.validation.Validateable",
-                (Modifier.ABSTRACT + Modifier.INTERFACE + Modifier.PUBLIC),
-                null
-        );
-        InnerClassNode innerClassNode = new InnerClassNode(
-                new ClassNode(java.lang.Object.class),
-                "pr.Account$DateRange",
-                Modifier.STATIC,
-                new ClassNode(java.lang.Object.class),
-                new ClassNode[]{implementsValidateable},
-                null
+    private void addDateRangeInnerClass(SourceUnit sourceUnit) {
+        ClassNode implementsValidateable = DomainTransformation.createInterface("grails.validation.Validateable",
+                (Modifier.ABSTRACT + Modifier.INTERFACE + Modifier.PUBLIC), null);
+        InnerClassNode innerClassNode = DomainTransformation.createInnerClass(
+                SUPER_CLASS,
+                "pr.Account$EffectiveData",
+                Modifier.STATIC, new ClassNode[]{implementsValidateable}, SUPER_CLASS);
+        sourceUnit.getAST().addClass(innerClassNode);
+
+        MethodCallExpression nowMethodCall = new MethodCallExpression(
+                new ClassExpression(new ClassNode(java.time.LocalDate.class)),
+                new ConstantExpression("now"),
+                new ArgumentListExpression()
         );
 
         ArgumentListExpression arguments = new ArgumentListExpression();
-        arguments.addExpression(new ClassExpression(new ClassNode(java.time.LocalDate.class)));
-        arguments.addExpression(new ConstantExpression("now"));
-
-        MethodCallExpression methodCallExpression = new MethodCallExpression(
-                new ClassExpression(new ClassNode(java.sql.Date.class)),
+        arguments.addExpression(nowMethodCall);
+        MethodCallExpression valueOfMethodCall = new MethodCallExpression(
+                new ClassExpression(new ClassNode("java.sql.Date", Modifier.PRIVATE, null)),
                 new ConstantExpression("valueOf"),
                 arguments
         );
 
-        FieldNode fieldNode = new FieldNode(
+        System.out.println("method " + valueOfMethodCall);
+
+        ClassNode javaSqlDate = new ClassNode(java.sql.Date.class);
+        javaSqlDate.setRedirect(new ClassNode(java.sql.Date.class));
+
+        ClassNode validateError = new ClassNode(org.springframework.validation.Errors.class);
+        validateError.setRedirect(new ClassNode(org.springframework.validation.Errors.class));
+
+        //javaSqlDate.setRedirect(new ClassNode("java.sql.Date", Modifier.PRIVATE, null));
+
+        FieldNode startDateFieldNode = new FieldNode(
                 "startDate",
                 Modifier.PRIVATE,
-                new ClassNode(java.sql.Date.class),
+                javaSqlDate,
                 innerClassNode,
-                methodCallExpression
+                valueOfMethodCall
         );
 
-        PropertyNode propertyNode = new PropertyNode(fieldNode, Modifier.PUBLIC, null, null);
+        FieldNode endDateFieldNode = new FieldNode(
+                "endDate",
+                Modifier.PRIVATE,
+                javaSqlDate,
+                innerClassNode,
+                new ConstantExpression(null)
+        );
 
-        innerClassNode.getProperties().add(propertyNode);
 
-        sourceUnit.getAST().addClass(innerClassNode);
+
+        MethodCallExpression valueOfError = new MethodCallExpression(
+                new ClassExpression(new ClassNode("org.springframework.validation.Errors", Modifier.PUBLIC, null)),
+                new ConstantExpression("valueOf"),
+                arguments
+        );
+
+        FieldNode validateErrors = new FieldNode(
+                "grails_validation_Validateable__errors",
+                Modifier.PRIVATE,
+                validateError,
+                innerClassNode,
+                null
+        );
+
+
+        innerClassNode.addProperty(new PropertyNode(startDateFieldNode, Modifier.PUBLIC, null, null));
+        innerClassNode.addProperty(new PropertyNode(endDateFieldNode, Modifier.PUBLIC, null, null));
+        //innerClassNode.addProperty(new PropertyNode(validateErrors, Modifier.PUBLIC, null, null));
+        innerClassNode.addField(validateErrors);
+
 
     }
 
     private void displayInterfaces(ClassNode classNode) {
-        if (classNode.getName().contains("Gone")) {
-            classNode.getProperties().stream().forEach(propertyNode ->
-                    {
+        System.out.println("\n****************************" + classNode.getName());
+        classNode.getFields().stream().forEach(fieldNode ->
+                {
+                    System.out.println("fieldNode-name " + fieldNode.getName());
+                    System.out.println("fieldNode-modifiers " + fieldNode.getModifiers());
+                    System.out.println("fieldNode-text " + fieldNode.getText());
+                    System.out.println("fieldNode-initialExp " + fieldNode.getInitialExpression());
+                    System.out.println("fieldNode-initialValueEx " + fieldNode.getInitialValueExpression());
+                    System.out.println("fieldNode-type " + fieldNode.getType());
+                    System.out.println("fieldNode-type-name " + fieldNode.getType().getName());
+                    System.out.println("fieldNode-type-super-class " + fieldNode.getType().getSuperClass());
+                    System.out.println("fieldNode-type-modifiers " + fieldNode.getType().getModifiers());
+                    System.out.println("fieldNode-type-isPrimaryClassNode " + fieldNode.getType().isPrimaryClassNode());
+                }
+        );
+        classNode.getProperties().stream().forEach(propertyNode ->
+                {
+                    System.out.println("propertyNode " + propertyNode.getName());
+                    System.out.println("propertyNode-modifiers " + propertyNode.getModifiers());
+                    System.out.println("propertyNode-getter-block " + propertyNode.getGetterBlock());
+                    System.out.println("propertyNode-setter-block " + propertyNode.getSetterBlock());
+                }
+        );
+    }
 
-                        FieldNode fieldNode = propertyNode.getField();
-                        System.out.println("fieldNode " + fieldNode.getName());
-                        System.out.println("propertyNode " + propertyNode.getName());
-                        System.out.println("fieldNode-modifiers " + fieldNode.getModifiers());
-                        System.out.println("propertyNode-modifiers " + propertyNode.getModifiers());
-                        System.out.println("propertyNode-getter-block " + propertyNode.getGetterBlock());
-                        System.out.println("propertyNode-setter-block " + propertyNode.getSetterBlock());
-                        System.out.println("propertyNode-setter-block " + propertyNode.getSetterBlock());
-                    }
-            );
-        }
+    static ClassNode SUPER_CLASS = new ClassNode(java.lang.Object.class);
+
+    static public InnerClassNode createInnerClass(ClassNode outerClass, String name, int modifiers, ClassNode[] interfaces, ClassNode superClass) {
+        InnerClassNode innerClassNode = new InnerClassNode(
+                outerClass,
+                "pr.Account$DateRange",
+                modifiers,
+                superClass == null ? SUPER_CLASS : superClass,
+                interfaces,
+                null
+        );
+        return innerClassNode;
+    }
+
+    static public ClassNode createInterface(String name, int modifiers, ClassNode superClass) {
+        return new ClassNode(
+                name,
+                modifiers,
+                superClass == null ? SUPER_CLASS : superClass
+        );
+
     }
 }
